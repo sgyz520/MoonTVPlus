@@ -48,10 +48,17 @@ export async function GET(request: NextRequest) {
     }
 
     const items = await listSourceScripts();
-    return NextResponse.json({
-      items,
-      template: getDefaultSourceScriptTemplate(),
-    });
+    return NextResponse.json(
+      {
+        items,
+        template: getDefaultSourceScriptTemplate(),
+      },
+      {
+        headers: {
+          'Cache-Control': 'no-store',
+        },
+      }
+    );
   } catch (error) {
     return NextResponse.json(
       { error: (error as Error).message || '获取脚本列表失败' },
@@ -80,19 +87,47 @@ export async function POST(request: NextRequest) {
           code: body.code,
           enabled: body.enabled,
         });
-        return NextResponse.json({ ok: true, item: saved });
+        return NextResponse.json(
+          { ok: true, item: saved },
+          {
+            headers: {
+              'Cache-Control': 'no-store',
+            },
+          }
+        );
       }
       case 'delete': {
         await deleteSourceScript(body.id);
-        return NextResponse.json({ ok: true });
+        return NextResponse.json(
+          { ok: true },
+          {
+            headers: {
+              'Cache-Control': 'no-store',
+            },
+          }
+        );
       }
       case 'toggle_enabled': {
         const item = await toggleSourceScriptEnabled(body.id);
-        return NextResponse.json({ ok: true, item });
+        return NextResponse.json(
+          { ok: true, item },
+          {
+            headers: {
+              'Cache-Control': 'no-store',
+            },
+          }
+        );
       }
       case 'restore': {
         const item = await restoreSourceScriptHistory(body.id, body.version);
-        return NextResponse.json({ ok: true, item });
+        return NextResponse.json(
+          { ok: true, item },
+          {
+            headers: {
+              'Cache-Control': 'no-store',
+            },
+          }
+        );
       }
       case 'test': {
         const result = await testSourceScript({
@@ -108,13 +143,24 @@ export async function POST(request: NextRequest) {
           return NextResponse.json(result, { status: 400 });
         }
 
-        return NextResponse.json(result);
+        return NextResponse.json(result, {
+          headers: {
+            'Cache-Control': 'no-store',
+          },
+        });
       }
       case 'import': {
         const imported = await importSourceScripts(
           Array.isArray(body.items) ? body.items : []
         );
-        return NextResponse.json({ ok: true, items: imported });
+        return NextResponse.json(
+          { ok: true, items: imported },
+          {
+            headers: {
+              'Cache-Control': 'no-store',
+            },
+          }
+        );
       }
       default:
         return NextResponse.json({ error: '未知操作' }, { status: 400 });

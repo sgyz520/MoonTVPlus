@@ -49,6 +49,30 @@ export interface SourceScriptTestResult {
   error?: string;
 }
 
+export type SourceScriptHook =
+  | 'getSources'
+  | 'search'
+  | 'recommend'
+  | 'detail'
+  | 'resolvePlayUrl';
+
+export interface PublicSourceScriptSummary {
+  id: string;
+  key: string;
+  name: string;
+  description?: string;
+  version: string;
+  updatedAt: number;
+}
+
+export interface ScriptSourceDescriptor {
+  id: string;
+  name: string;
+}
+
+const SCRIPT_SOURCE_PREFIX = 'script:';
+const SCRIPT_EPISODE_PREFIX = '__script_ep__';
+
 const DEFAULT_SCRIPT_TEMPLATE = `return {
   meta: {
     name: '示例脚本',
@@ -409,6 +433,78 @@ function normalizeScript(script: any) {
   return script;
 }
 
+async function getEnabledSourceScriptByKey(key: string) {
+  const registry = await loadRegistry();
+  const item = registry.items.find((record) => record.key === key);
+  if (!item) {
+    throw new Error('脚本不存在');
+  }
+  if (!item.enabled) {
+    throw new Error('脚本已停用');
+  }
+  return item;
+}
+
+async function compileSourceScript(
+  script: SourceScriptRecord,
+  configValues?: Record<string, string>
+) {
+  const factory = createScriptFactory(script.code);
+  const compiled = normalizeScript(factory());
+  const context = await createScriptContext(script, configValues);
+  return {
+    compiled,
+    ...context,
+  };
+}
+
+export async function executeSavedSourceScript(input: {
+  key: string;
+  hook: SourceScriptHook;
+  payload?: Record<string, any>;
+  configValues?: Record<string, string>;
+}): Promise<SourceScriptTestResult> {
+  const startedAt = Date.now();
+  const script = await getEnabledSourceScriptByKey(input.key);
+  const { compiled, ctx, logs } = await compileSourceScript(
+    script,
+    input.configValues
+  );
+
+  const hook = compiled[input.hook];
+  if (typeof hook !== 'function') {
+    throw new Error(`脚本未实现 ${input.hook} hook`);
+  }
+
+  const result = await withTimeout(
+    Promise.resolve(hook(ctx, input.payload || {})),
+    DEFAULT_TIMEOUT_MS
+  );
+
+  return {
+    ok: true,
+    durationMs: Date.now() - startedAt,
+    logs,
+    meta: compiled.meta,
+    result,
+  };
+}
+
+export async function listEnabledSourceScripts(): Promise<PublicSourceScriptSummary[]> {
+  const registry = await loadRegistry();
+  return registry.items
+    .filter((item) => item.enabled)
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .map((item) => ({
+      id: item.id,
+      key: item.key,
+      name: item.name,
+      description: item.description,
+      version: item.version,
+      updatedAt: item.updatedAt,
+    }));
+}
+
 export async function listSourceScripts() {
   const registry = await loadRegistry();
   return registry.items.sort((a, b) => b.updatedAt - a.updatedAt);
@@ -577,7 +673,7 @@ export async function restoreSourceScriptHistory(id: string, version: string) {
 
 export async function testSourceScript(input: {
   code: string;
-  hook: 'getSources' | 'search' | 'recommend' | 'detail' | 'resolvePlayUrl';
+  hook: SourceScriptHook;
   payload: Record<string, any>;
   name?: string;
   key?: string;
@@ -630,4 +726,235 @@ export async function testSourceScript(input: {
 
 export function getDefaultSourceScriptTemplate() {
   return DEFAULT_SCRIPT_TEMPLATE;
+}
+
+export function buildScriptSourceValue(scriptKey: string, sourceId?: string) {
+  return `${SCRIPT_SOURCE_PREFIX}${scriptKey}:${sourceId || 'default'}`;
+}
+
+export function parseScriptSourceValue(source: string) {
+  if (!source.startsWith(SCRIPT_SOURCE_PREFIX)) {
+    return null;
+  }
+
+  const rest = source.slice(SCRIPT_SOURCE_PREFIX.length);
+  const separatorIndex = rest.indexOf(':');
+  if (separatorIndex === -1) {
+    return {
+      scriptKey: rest,
+      sourceId: 'default',
+    };
+  }
+
+  return {
+    scriptKey: rest.slice(0, separatorIndex),
+    sourceId: rest.slice(separatorIndex + 1) || 'default',
+  };
+}
+
+export function encodeScriptEpisodePayload(payload: Record<string, any>) {
+  return `${SCRIPT_EPISODE_PREFIX}${Buffer.from(
+    JSON.stringify(payload),
+    'utf8'
+  ).toString('base64')}`;
+}
+
+export function decodeScriptEpisodePayload(value: string) {
+  if (!value.startsWith(SCRIPT_EPISODE_PREFIX)) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(
+      Buffer.from(
+        value.slice(SCRIPT_EPISODE_PREFIX.length),
+        'base64'
+      ).toString('utf8')
+    ) as Record<string, any>;
+  } catch {
+    return null;
+  }
+}
+
+export function normalizeScriptSources(result: any): ScriptSourceDescriptor[] {
+  if (!Array.isArray(result)) {
+    return [{ id: 'default', name: '默认源' }];
+  }
+
+  return result
+    .filter((item) => item && item.id)
+    .map((item) => ({
+      id: String(item.id),
+      name: String(item.name || item.id),
+    }));
+}
+
+export function normalizeScriptSearchResults(input: {
+  scriptKey: string;
+  scriptName: string;
+  sourceId: string;
+  sourceName: string;
+  result: any;
+}) {
+  const list = Array.isArray(input.result?.list) ? input.result.list : [];
+  return list.map((item: any) => ({
+    id: String(item.id),
+    title: String(item.title || ''),
+    poster: item.poster || '',
+    episodes: [],
+    episodes_titles: [],
+    source: buildScriptSourceValue(input.scriptKey, input.sourceId),
+    source_name: `${input.scriptName} / ${input.sourceName}`,
+    year: item.year || '',
+    desc: item.desc || '',
+    type_name: item.type_name || '',
+    douban_id: item.douban_id || 0,
+    vod_remarks: item.vod_remarks,
+  }));
+}
+
+export function normalizeScriptDetailResult(input: {
+  source: string;
+  scriptKey: string;
+  scriptName: string;
+  sourceId: string;
+  sourceName: string;
+  detailId: string;
+  result: any;
+}) {
+  const playbacks = Array.isArray(input.result?.playbacks)
+    ? input.result.playbacks
+    : [
+        {
+          sourceId: input.sourceId,
+          sourceName: input.sourceName,
+          lineId: 'default',
+          lineName: '默认线路',
+          episodes: input.result?.episodes || [],
+          episodes_titles: input.result?.episodes_titles || [],
+        },
+      ];
+
+  const flattenedEpisodes: string[] = [];
+  const flattenedTitles: string[] = [];
+
+  playbacks.forEach((playback: any) => {
+    const playbackSourceId = String(playback.sourceId || input.sourceId);
+    const playbackSourceName = String(playback.sourceName || input.sourceName);
+    const lineId = String(playback.lineId || 'default');
+    const lineName = String(playback.lineName || '默认线路');
+    const titles = Array.isArray(playback.episodes_titles)
+      ? playback.episodes_titles
+      : [];
+    const episodes = Array.isArray(playback.episodes) ? playback.episodes : [];
+
+    episodes.forEach((episode: any, index: number) => {
+      const playUrl =
+        typeof episode === 'string'
+          ? episode
+          : String(episode?.playUrl || episode?.url || '');
+      const episodeTitle =
+        typeof episode === 'object' && episode?.title
+          ? String(episode.title)
+          : String(titles[index] || `第${index + 1}集`);
+
+      flattenedEpisodes.push(
+        encodeScriptEpisodePayload({
+          script: input.scriptKey,
+          sourceId: playbackSourceId,
+          sourceName: playbackSourceName,
+          lineId,
+          lineName,
+          playUrl,
+          episodeIndex: index,
+        })
+      );
+      flattenedTitles.push(`${playbackSourceName} / ${lineName} / ${episodeTitle}`);
+    });
+  });
+
+  return {
+    id: input.detailId,
+    title: String(input.result?.title || ''),
+    poster: input.result?.poster || '',
+    episodes: flattenedEpisodes,
+    episodes_titles: flattenedTitles,
+    source: input.source,
+    source_name: `${input.scriptName} / ${input.sourceName}`,
+    class: input.result?.class,
+    year: input.result?.year || '',
+    desc: input.result?.desc || '',
+    type_name: input.result?.type_name || '',
+    douban_id: input.result?.douban_id || 0,
+    vod_remarks: input.result?.vod_remarks,
+    vod_total: input.result?.vod_total,
+    proxyMode: false,
+  };
+}
+
+export async function resolveScriptDetailPlaybacks(input: {
+  scriptKey: string;
+  sourceId: string;
+  result: any;
+}) {
+  const playbacks = Array.isArray(input.result?.playbacks)
+    ? input.result.playbacks
+    : [
+        {
+          sourceId: input.sourceId,
+          sourceName: input.sourceId,
+          lineId: 'default',
+          lineName: '默认线路',
+          episodes: input.result?.episodes || [],
+          episodes_titles: input.result?.episodes_titles || [],
+        },
+      ];
+
+  const resolvedPlaybacks = await Promise.all(
+    playbacks.map(async (playback: any) => {
+      const playbackSourceId = String(playback.sourceId || input.sourceId);
+      const lineId = String(playback.lineId || 'default');
+      const episodes = Array.isArray(playback.episodes) ? playback.episodes : [];
+
+      const resolvedEpisodes = await Promise.all(
+        episodes.map(async (episode: any, index: number) => {
+          const playUrl =
+            typeof episode === 'string'
+              ? episode
+              : String(episode?.playUrl || episode?.url || '');
+
+          try {
+            const execution = await executeSavedSourceScript({
+              key: input.scriptKey,
+              hook: 'resolvePlayUrl',
+              payload: {
+                playUrl,
+                sourceId: playbackSourceId,
+                lineId,
+                episodeIndex: index,
+              },
+            });
+
+            return execution.result?.url || playUrl;
+          } catch (error) {
+            const message = error instanceof Error ? error.message : '';
+            if (message.includes('未实现 resolvePlayUrl hook')) {
+              return playUrl;
+            }
+            return playUrl;
+          }
+        })
+      );
+
+      return {
+        ...playback,
+        episodes: resolvedEpisodes,
+      };
+    })
+  );
+
+  return {
+    ...input.result,
+    playbacks: resolvedPlaybacks,
+  };
 }

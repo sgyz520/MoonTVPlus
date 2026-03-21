@@ -49,8 +49,8 @@ import { getDoubanDetail } from '@/lib/douban.client';
 import { getTMDBImageUrl } from '@/lib/tmdb.search';
 import { DanmakuFilterConfig, EpisodeFilterConfig, SearchResult } from '@/lib/types';
 import { base58Decode, getVideoResolutionFromM3u8, processImageUrl } from '@/lib/utils';
-import { useEnableComments } from '@/hooks/useEnableComments';
 import { useEnableAIComments } from '@/hooks/useEnableAIComments';
+import { useEnableComments } from '@/hooks/useEnableComments';
 import { usePlaySync } from '@/hooks/usePlaySync';
 
 import AIChatPanel from '@/components/AIChatPanel';
@@ -1655,7 +1655,7 @@ function PlayPageClient() {
     maxSpeed: number,
     minPing: number,
     maxPing: number,
-    weight: number = 0
+    weight = 0
   ): number => {
     let score = 0;
 
@@ -2162,7 +2162,7 @@ function PlayPageClient() {
         // 读取 m3u8 文件
         const fileHandle = await fileSystemCheck.dirHandle.getFileHandle('playlist.m3u8', { create: false });
         const file = await fileHandle.getFile();
-        let content = await file.text();
+        const content = await file.text();
 
         // 解析 m3u8 文件，为每个 ts 文件创建 Blob URL
         const lines = content.split('\n');

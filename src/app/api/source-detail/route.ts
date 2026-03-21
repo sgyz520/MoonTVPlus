@@ -6,6 +6,13 @@ import { getAuthInfoFromCookie } from '@/lib/auth';
 import { getAvailableApiSites, getCacheTime, getConfig } from '@/lib/config';
 import { getDetailFromApiV2 } from '@/lib/downstream';
 import { getProxyToken } from '@/lib/emby-token';
+import {
+  executeSavedSourceScript,
+  normalizeScriptDetailResult,
+  resolveScriptDetailPlaybacks,
+  normalizeScriptSources,
+  parseScriptSourceValue,
+} from '@/lib/source-script';
 
 export const runtime = 'nodejs';
 
@@ -26,6 +33,55 @@ export async function GET(request: NextRequest) {
 
   if (!id || !sourceCode) {
     return NextResponse.json({ error: '缺少必要参数' }, { status: 400 });
+  }
+
+  const parsedScriptSource = parseScriptSourceValue(sourceCode);
+  if (parsedScriptSource) {
+    try {
+      const sourcesExecution = await executeSavedSourceScript({
+        key: parsedScriptSource.scriptKey,
+        hook: 'getSources',
+        payload: {},
+      });
+      const sources = normalizeScriptSources(sourcesExecution.result);
+      const sourceInfo =
+        sources.find((item) => item.id === parsedScriptSource.sourceId) || {
+          id: parsedScriptSource.sourceId,
+          name: parsedScriptSource.sourceId,
+        };
+
+      const detailExecution = await executeSavedSourceScript({
+        key: parsedScriptSource.scriptKey,
+        hook: 'detail',
+        payload: {
+          id,
+          sourceId: parsedScriptSource.sourceId,
+        },
+      });
+
+      const resolvedDetailResult = await resolveScriptDetailPlaybacks({
+        scriptKey: parsedScriptSource.scriptKey,
+        sourceId: parsedScriptSource.sourceId,
+        result: detailExecution.result,
+      });
+
+      const normalized = normalizeScriptDetailResult({
+        source: sourceCode,
+        scriptKey: parsedScriptSource.scriptKey,
+        scriptName: detailExecution.meta?.name || parsedScriptSource.scriptKey,
+        sourceId: parsedScriptSource.sourceId,
+        sourceName: sourceInfo.name,
+        detailId: id,
+        result: resolvedDetailResult,
+      });
+
+      return NextResponse.json(normalized);
+    } catch (error) {
+      return NextResponse.json(
+        { error: (error as Error).message },
+        { status: 500 }
+      );
+    }
   }
 
   // 特殊处理 emby 源（支持多源）

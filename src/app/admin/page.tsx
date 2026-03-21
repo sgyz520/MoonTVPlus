@@ -5506,6 +5506,7 @@ const VideoSourceConfig = ({
         message={alertModal.message}
         timer={alertModal.timer}
         showConfirm={alertModal.showConfirm}
+        onConfirm={alertModal.onConfirm}
       />
 
       {/* 批量操作确认弹窗 */}
@@ -6052,10 +6053,9 @@ const VideoSourceScriptLab = () => {
       setTemplate(data.template || '');
 
       const targetId =
-        preferId ||
-        selectedScriptId ||
-        nextScripts[0]?.id ||
-        null;
+        preferId !== undefined
+          ? preferId
+          : selectedScriptId || nextScripts[0]?.id || null;
 
       const selected = nextScripts.find((item) => item.id === targetId) || null;
       if (selected) {
@@ -6565,6 +6565,7 @@ const VideoSourceScriptLab = () => {
         message={alertModal.message}
         timer={alertModal.timer}
         showConfirm={alertModal.showConfirm}
+        onConfirm={alertModal.onConfirm}
       />
     </div>
   );
